@@ -1,0 +1,29 @@
+import hashlib
+
+def generate_key(client_name, secret_salt="MY_PRIVATE_KEY_2026"):
+    """
+    توليد كود تفعيل مشفر بناءً على اسم العميل
+    """
+    raw_string = f"{client_name.strip().lower()}_{secret_salt}"
+    # تشفير البيانات باستخدام MD5 وأخذ أول 16 حرف
+    hash_obj = hashlib.md5(raw_string.encode('utf-8'))
+    full_hash = hash_obj.hexdigest().upper()
+    
+    # تنسيق الكود على شكل: XXXX-XXXX-XXXX-XXXX
+    formatted_key = f"{full_hash[:4]}-{full_hash[4:8]}-{full_hash[8:12]}-{full_hash[12:16]}"
+    return formatted_key
+
+if __name__ == "__main__":
+    print("="*40)
+    print("   مولد أكواد التفعيل - الخاص بالمبرمج")
+    print("="*40)
+    client = input("أدخل اسم العميل أو المحل: ")
+    if client.strip():
+        key = generate_key(client)
+        print("\n" + "-"*40)
+        print(f"اسم العميل: {client}")
+        print(f"كود التفعيل: {key}")
+        print("-"*40)
+        print("ارسل هذا الكود للعميل لتفعيل التطبيق.")
+    else:
+        print("اسم العميل لا يمكن أن يكون فارغاً!")
