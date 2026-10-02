@@ -1,12 +1,18 @@
 import sqlite3
-import tkinter as tk
-from tkinter import messagebox, ttk
+import hashlib
 
-# --- 1. إنشاء وتهيئة قاعدة البيانات ---
+# 1. معادلة التحقق من كود التفعيل
+def verify_key(client_name, user_key, secret_salt="MY_PRIVATE_KEY_2026"):
+    raw_string = f"{client_name.strip().lower()}_{secret_salt}"
+    hash_obj = hashlib.md5(raw_string.encode('utf-8'))
+    full_hash = hash_obj.hexdigest().upper()
+    expected_key = f"{full_hash[:4]}-{full_hash[4:8]}-{full_hash[8:12]}-{full_hash[12:16]}"
+    return user_key.strip().upper() == expected_key
+
+# 2. تهيئة قاعدة البيانات والجداول
 def init_db():
     conn = sqlite3.connect("sales.db")
     cursor = conn.cursor()
-    # جدول المنتجات والمخزون
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS products (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -15,7 +21,6 @@ def init_db():
             stock INTEGER NOT NULL
         )
     ''')
-    # جدول المبيعات
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS sales (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -25,7 +30,6 @@ def init_db():
             date TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
     ''')
-    # جدول التفعيل
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS settings (
             key TEXT PRIMARY KEY,
@@ -35,8 +39,8 @@ def init_db():
     conn.commit()
     conn.close()
 
-# --- 2. فحص حالة التفعيل ---
-def is_activated():
+# 3. فحص التفعيل
+def check_activation():
     conn = sqlite3.connect("sales.db")
     cursor = conn.cursor()
     cursor.execute("SELECT value FROM settings WHERE key = 'activated'")
@@ -44,93 +48,92 @@ def is_activated():
     conn.close()
     return row and row[0] == "true"
 
-def activate_system():
-    key = entry_key.get().strip()
-    if key == "SAID2026":
+def activate_app():
+    print("\n" + "="*35)
+    print("      تطبيق المبيعات غير مفعل")
+    print("="*35)
+    client_name = input("أدخل اسم المحل/العميل: ").strip()
+    user_key = input("أدخل كود التفعيل الخاص بك: ").strip()
+    
+    if verify_key(client_name, user_key):
         conn = sqlite3.connect("sales.db")
         cursor = conn.cursor()
         cursor.execute("INSERT OR REPLACE INTO settings (key, value) VALUES ('activated', 'true')")
+        cursor.execute("INSERT OR REPLACE INTO settings (key, value) VALUES ('client_name', ?)", (client_name,))
         conn.commit()
         conn.close()
-        messagebox.showinfo("نجاح", "تم تفعيل البرنامج بنجاح! يرجى إعادة إغلاقه وفتحه.")
-        activation_win.destroy()
-        open_main_app()
+        print(f"\n تم تفعيل التطبيق بنجاح لـ ({client_name})! مرحباً بك.")
+        return True
     else:
-        messagebox.showerror("خطأ", "كود التفعيل غير صحيح!")
+        print("\n كود التفعيل أو اسم العميل غير صحيح! تواصل مع المبرمج للحصول على الكود.")
+        return False
 
-# --- 3. نافذة التطبيق الرئيسية ---
-def open_main_app():
-    root = tk.Tk()
-    root.title("نظام الكاشير وإدارة المخزون")
-    root.geometry("450x600")
-
-    # --- وظائف المخزون والمبيعات ---
-    def refresh_tables():
-        # تحديث جدول المنتجات
-        for item in tree_products.get_children():
-            tree_products.delete(item)
+# 4. وظائف المخزون
+def add_product():
+    print("\n--- إضافة منتج جديد للمخزن ---")
+    name = input("اسم المنتج: ").strip()
+    try:
+        price = float(input("سعر القطعة: "))
+        stock = int(input("الكمية المتوفرة بالمخزن: "))
+        
         conn = sqlite3.connect("sales.db")
         cursor = conn.cursor()
-        cursor.execute("SELECT name, price, stock FROM products")
-        for row in cursor.fetchall():
-            tree_products.insert("", "end", values=row)
-
-        # تحديث جدول المبيعات
-        for item in tree_sales.get_children():
-            tree_sales.delete(item)
-        cursor.execute("SELECT product_name, quantity, total_price, date FROM sales ORDER BY id DESC")
-        for row in cursor.fetchall():
-            tree_sales.insert("", "end", values=row)
+        cursor.execute("INSERT INTO products (name, price, stock) VALUES (?, ?, ?)", (name, price, stock))
+        conn.commit()
         conn.close()
+        print(f" تم إضافة المنتج '{name}' للمخزن بنجاح.")
+    except sqlite3.IntegrityError:
+        print(" هذا المنتج موجود بالفعل بالمخزن!")
+    except ValueError:
+        print(" خطأ في إدخال السعر أو الكمية! يرجى إدخال أرقام صحيحة.")
 
-    def add_product():
-        name = entry_prod_name.get().strip()
-        price = entry_prod_price.get().strip()
-        stock = entry_prod_stock.get().strip()
+def show_stock():
+    conn = sqlite3.connect("sales.db")
+    cursor = conn.cursor()
+    cursor.execute("SELECT id, name, price, stock FROM products")
+    rows = cursor.fetchall()
+    conn.close()
+    
+    print("\n" + "="*40)
+    print("               حالة المخزون الحالي")
+    print("="*40)
+    if not rows:
+        print("المخزن فارغ حالياً!")
+    else:
+        for row in rows:
+            status = " (تنبيه: الكمية قريبة من النفاد!)" if row[3] <= 3 else ""
+            print(f"ID: {row[0]} | المنتج: {row[1]} | السعر: {row[2]} ج.م | المخزون: {row[3]}{status}")
+    print("="*40)
 
-        if not name or not price or not stock:
-            messagebox.showwarning("تنبيه", "يرجى ملء جميع بيانات المنتج")
-            return
-        try:
-            conn = sqlite3.connect("sales.db")
-            cursor = conn.cursor()
-            cursor.execute("INSERT INTO products (name, price, stock) VALUES (?, ?, ?)", (name, float(price), int(stock)))
-            conn.commit()
-            conn.close()
-            messagebox.showinfo("نجاح", f"تم إضافة المنتج '{name}' للمخزون")
-            entry_prod_name.delete(0, tk.END)
-            entry_prod_price.delete(0, tk.END)
-            entry_prod_stock.delete(0, tk.END)
-            refresh_tables()
-        except sqlite3.IntegrityError:
-            messagebox.showerror("خطأ", "هذا المنتج موجود بالفعل بالمخزون!")
+# 5. وظائف المبيعات
+def make_sale():
+    print("\n--- تسجيل عملية بيع ---")
+    name = input("اسم المنتج المباع: ").strip()
+    
+    conn = sqlite3.connect("sales.db")
+    cursor = conn.cursor()
+    cursor.execute("SELECT price, stock FROM products WHERE name = ?", (name,))
+    prod = cursor.fetchone()
+    
+    if not prod:
+        print(" خطأ: هذا المنتج غير موجود في المخزن!")
+        conn.close()
+        return
 
-    def make_sale():
-        name = entry_sale_name.get().strip()
-        qty_str = entry_sale_qty.get().strip()
-
-        if not name or not qty_str:
-            messagebox.showwarning("تنبيه", "يرجى كتابة اسم المنتج والكمية")
-            return
-
-        qty = int(qty_str)
-        conn = sqlite3.connect("sales.db")
-        cursor = conn.cursor()
-        cursor.execute("SELECT price, stock FROM products WHERE name = ?", (name,))
-        prod = cursor.fetchone()
-
-        if not prod:
-            messagebox.showerror("خطأ", "المنتج غير موجود في المخزن!")
-            conn.close()
-            return
-
+    try:
+        qty = int(input("الكمية المباعة: "))
         price, current_stock = prod
+
+        if qty <= 0:
+            print(" الكمية يجب أن تكون أكبر من 0!")
+            conn.close()
+            return
+            
         if qty > current_stock:
-            messagebox.showerror("خطأ", f"الكمية المتاحة في المخزن هي {current_stock} فقط!")
+            print(f" خطأ: الكمية المتاحة في المخزن هي ({current_stock}) فقط!")
             conn.close()
             return
 
-        # خصم الكمية وتسجيل البيع
         new_stock = current_stock - qty
         total_price = price * qty
         cursor.execute("UPDATE products SET stock = ? WHERE name = ?", (new_stock, name))
@@ -138,85 +141,59 @@ def open_main_app():
         conn.commit()
         conn.close()
 
-        messagebox.showinfo("تم البيع", f"تم عملية البيع بنجاح!\nالإجمالي: {total_price} ج.م")
-        entry_sale_name.delete(0, tk.END)
-        entry_sale_qty.delete(0, tk.END)
-        refresh_tables()
+        print(f"\n تم البيع بنجاح! الإجمالي: {total_price} ج.م")
+        print(f"المتبقي بالمخزن من '{name}': {new_stock} قطعة.")
+    except ValueError:
+        print(" يرجى إدخال رقم صحيح للكمية!")
 
-    # --- الواجهة (Tabs) ---
-    notebook = ttk.Notebook(root)
-    notebook.pack(fill="both", expand=True)
+def show_sales_report():
+    conn = sqlite3.connect("sales.db")
+    cursor = conn.cursor()
+    cursor.execute("SELECT id, product_name, quantity, total_price, date FROM sales ORDER BY id DESC")
+    rows = cursor.fetchall()
+    conn.close()
 
-    # تبويب المبيعات
-    tab_sales = ttk.Frame(notebook)
-    notebook.add(tab_sales, text="إجراء بيع")
+    print("\n" + "="*45)
+    print("               سجل المبيعات والأرباح")
+    print("="*45)
+    grand_total = 0
+    if not rows:
+        print("لا توجد عمليات بيع مسجلة حتى الآن.")
+    else:
+        for row in rows:
+            print(f"رقم: {row[0]} | المنتج: {row[1]} | الكمية: {row[2]} | الإجمالي: {row[3]} ج.م | التاريخ: {row[4]}")
+            grand_total += row[3]
+    print("-"*45)
+    print(f"إجمالي المبيعات الكلية: {grand_total} ج.م")
+    print("="*45)
 
-    ttk.Label(tab_sales, text="اسم المنتج:").pack(pady=2)
-    entry_sale_name = ttk.Entry(tab_sales)
-    entry_sale_name.pack(pady=2)
-
-    ttk.Label(tab_sales, text="الكمية المباعة:").pack(pady=2)
-    entry_sale_qty = ttk.Entry(tab_sales)
-    entry_sale_qty.pack(pady=2)
-
-    ttk.Button(tab_sales, text="إتمام عملية البيع", command=make_sale).pack(pady=10)
-
-    ttk.Label(tab_sales, text="سجل المبيعات الأخيرة:").pack(pady=5)
-    tree_sales = ttk.Treeview(tab_sales, columns=("prod", "qty", "total", "date"), show="headings", height=8)
-    tree_sales.heading("prod", text="المنتج")
-    tree_sales.heading("qty", text="الكمية")
-    tree_sales.heading("total", text="الإجمالي")
-    tree_sales.heading("date", text="التاريخ")
-    tree_sales.column("prod", width=90)
-    tree_sales.column("qty", width=50)
-    tree_sales.column("total", width=70)
-    tree_sales.column("date", width=120)
-    tree_sales.pack(fill="both", expand=True)
-
-    # تبويب المخزون
-    tab_stock = ttk.Frame(notebook)
-    notebook.add(tab_stock, text="إدارة المخزون")
-
-    ttk.Label(tab_stock, text="اسم المنتج الجديد:").pack(pady=2)
-    entry_prod_name = ttk.Entry(tab_stock)
-    entry_prod_name.pack(pady=2)
-
-    ttk.Label(tab_stock, text="سعر القطعة:").pack(pady=2)
-    entry_prod_price = ttk.Entry(tab_stock)
-    entry_prod_price.pack(pady=2)
-
-    ttk.Label(tab_stock, text="الكمية الأولية بالمخزن:").pack(pady=2)
-    entry_prod_stock = ttk.Entry(tab_stock)
-    entry_prod_stock.pack(pady=2)
-
-    ttk.Button(tab_stock, text="إضافة للمخزن", command=add_product).pack(pady=10)
-
-    ttk.Label(tab_stock, text="قائمة المنتجات والمخزون الحالي:").pack(pady=5)
-    tree_products = ttk.Treeview(tab_stock, columns=("name", "price", "stock"), show="headings", height=8)
-    tree_products.heading("name", text="اسم المنتج")
-    tree_products.heading("price", text="السعر")
-    tree_products.heading("stock", text="المخزون")
-    tree_products.column("name", width=120)
-    tree_products.column("price", width=80)
-    tree_products.column("stock", width=80)
-    tree_products.pack(fill="both", expand=True)
-
-    refresh_tables()
-    root.mainloop()
-
-# --- 4. نقطة الانطلاق ---
+# 6. التشغيل الرئيسي
 if __name__ == "__main__":
     init_db()
-    if is_activated():
-        open_main_app()
-    else:
-        activation_win = tk.Tk()
-        activation_win.title("تفعيل البرنامج")
-        activation_win.geometry("300x180")
+    
+    if not check_activation():
+        if not activate_app():
+            exit()
 
-        tk.Label(activation_win, text="البرنامج غير مفعّل!\nأدخل كود التفعيل:").pack(pady=15)
-        entry_key = tk.Entry(activation_win, show="*")
-        entry_key.pack(pady=5)
+    while True:
+        print("\n--- نظام الكاشير والمخزون (مُفعل) ---")
+        print("1. تسجيل عملية بيع جديدة")
+        print("2. عرض سجل المبيعات والأرباح")
+        print("3. إضافة منتج جديد للمخزن")
+        print("4. عرض حالة المخزون")
+        print("5. خروج")
+        choice = input("اختر خياراً (1-5): ").strip()
 
-        tk.Button(activation_win, text="تفعيل الآن", command=activate_system).pack(pady=10)
-        activation_win.mainloop()
+        if choice == "1":
+            make_sale()
+        elif choice == "2":
+            show_sales_report()
+        elif choice == "3":
+            add_product()
+        elif choice == "4":
+            show_stock()
+        elif choice == "5":
+            print("\nتم إغلاق البرنامج بنجاح. شكراً لك!")
+            break
+        else:
+            print("خيار غير صحيح، حاول مرة أخرى.")
